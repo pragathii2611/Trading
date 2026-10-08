@@ -66,6 +66,34 @@ To get the computer's IP address: on macOS run `ipconfig getifaddr en0`; on Wind
 
 Run the tests with `.venv/bin/python -m pytest`.
 
+## Deploy online (Render or Railway)
+
+The bot has to run **all the time** (it checks stop-losses every few seconds), so it needs an
+always-on host. Serverless hosts such as Vercel can't run it. The repo includes a `Dockerfile`, `render.yaml` and `railway.json`.
+
+**Render (recommended):**
+1. Push this repo to GitHub (already done).
+2. On <https://dashboard.render.com>, go to **New → Blueprint** and pick this repo. Render reads `render.yaml`.
+3. When asked, enter an **APP_PASSWORD** (required, because the app is on the public internet). Leave the Kite keys empty for now.
+4. Click **Apply**. In a few minutes you get a URL like `https://ai-trader-xxxx.onrender.com`. Open it on your
+   iPhone in Safari, enter the password, then tap **Share → Add to Home Screen**.
+
+This uses the *Starter* plan (about $7/month) plus a 1 GB disk for your trades and funds. Don't use
+the free plan: it sleeps after 15 minutes idle, which stops the bot and wipes your data.
+
+**Railway:**
+1. On <https://railway.com>, go to **New Project → Deploy from GitHub repo** and pick this repo. Railway uses `railway.json`.
+2. Under **Variables**, add `APP_PASSWORD`, `DATA_SOURCE=yahoo` and `DB_PATH=/data/trading.db`.
+3. Right-click the service, choose **Attach Volume**, and set the mount path to `/data`.
+4. Under **Settings → Networking**, click **Generate Domain**.
+
+**Notes:**
+- Keep it at **1 instance**. The trading engine lives inside the web process.
+- For Kite, set the app's redirect URL to `https://<your-app-url>/kite/callback`.
+- Zerodha now requires API orders to come from a **registered static IP**. Render and Railway only
+  offer static outbound IPs on some plans, so check that before going live. A small Mumbai VPS is the
+  alternative. Paper trading works anywhere.
+
 ## Going from demo → paper trading on real prices → live
 
 1. **Demo (default):** `DATA_SOURCE=simulated` uses fake prices, so you can try every button any time.

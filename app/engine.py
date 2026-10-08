@@ -548,6 +548,7 @@ class Engine:
             "time": now.isoformat(timespec="seconds"), "mode": self.mode, "data_source": self.data_source,
             "connected": b is not None, "running": self.running, "kill_switch": self.kill_switch,
             "halted": self.halted, "market_open": self.risk.market_open(now),
+            "password_set": bool(self.s.app_password),
             "funds": {k: v for k, v in funds.items() if k != "ledger"}, "day_pnl": day_pnl,
             "peak_day_pnl": round(self.peak_day_pnl, 2), "start_equity": self.start_equity,
             "positions": positions, "watchlist": watch,

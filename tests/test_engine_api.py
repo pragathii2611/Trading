@@ -87,3 +87,6 @@ def test_password_protection(settings):
         assert c.get("/api/status", auth=("me", "wrong")).status_code == 401
         assert c.get("/api/status", auth=("me", "s3cret")).status_code == 200
         assert c.get("/api/status").status_code == 200  # session cookie remembered
+    with TestClient(create_app(e, start_loop=False)) as c:
+        assert c.get("/api/health").status_code == 200  # health check stays open
+        assert c.get("/api/status", auth=("me", "pässwörd")).status_code == 401  # non-ASCII is a clean 401

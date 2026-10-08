@@ -117,6 +117,7 @@ function render(s) {
   kill.textContent = s.kill_switch ? "RESET" : "KILL"; kill.classList.toggle("reset", s.kill_switch);
 
   const notes = [];
+  if (!s.password_set && !["localhost", "127.0.0.1"].includes(location.hostname)) notes.push("⚠ No APP_PASSWORD set: anyone with this link can trade. Set it in your host's environment variables.");
   if (!s.connected) notes.push("Not connected to Kite — log in from Account.");
   if (s.kill_switch) notes.push("Kill switch ON: trading blocked until you tap RESET.");
   if (s.halted) notes.push("Bot halted for today: " + s.halted);

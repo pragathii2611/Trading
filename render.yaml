@@ -1,0 +1,30 @@
+# Render Blueprint: Dashboard → New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: ai-trader
+    runtime: docker
+    plan: starter          # always-on; the free plan sleeps and would stop the bot
+    region: singapore      # closest Render region to NSE/BSE
+    healthCheckPath: /api/health
+    numInstances: 1        # must stay 1: the engine keeps state in this process
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: APP_PASSWORD
+        sync: false        # Render asks you for it when creating the service
+      - key: TRADING_MODE
+        value: paper
+      - key: DATA_SOURCE
+        value: yahoo
+      - key: WATCHLIST
+        value: RELIANCE,TCS,INFY,HDFCBANK,ICICIBANK
+      - key: STARTING_CAPITAL
+        value: "100000"
+      - key: BOT_CAPITAL
+        value: "100000"
+      - key: KITE_API_KEY
+        sync: false
+      - key: KITE_API_SECRET
+        sync: false

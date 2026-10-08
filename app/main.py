@@ -89,10 +89,10 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
     @app.middleware("http")
     async def password_guard(request: Request, call_next):
         password = request.app.state.engine.s.app_password
-        if not password or request.url.path.startswith("/static/"):
+        if not password or request.url.path.startswith("/static/") or request.url.path == "/api/health":
             return await call_next(request)
         token = _session_token(password)
-        if hmac.compare_digest(request.cookies.get("ai_trader", ""), token):
+        if hmac.compare_digest(request.cookies.get("ai_trader", "").encode(), token.encode()):
             return await call_next(request)
         header = request.headers.get("authorization", "")
         if header.startswith("Basic "):
@@ -100,9 +100,10 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
                 _, _, given = base64.b64decode(header[6:]).decode().partition(":")
             except Exception:
                 given = ""
-            if hmac.compare_digest(given, password):
+            if hmac.compare_digest(given.encode(), password.encode()):
                 resp = await call_next(request)
-                resp.set_cookie("ai_trader", token, httponly=True, samesite="lax", max_age=30 * 86400)
+                resp.set_cookie("ai_trader", token, httponly=True, samesite="lax", max_age=30 * 86400,
+                                secure=request.url.scheme == "https")
                 return resp
         return Response("Password required", 401, {"WWW-Authenticate": 'Basic realm="AI Trader"'})
 
@@ -118,6 +119,10 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
     @app.get("/")
     def index():
         return FileResponse(STATIC / "index.html")
+
+    @app.get("/api/health")
+    def health():
+        return {"ok": True}
 
     # ---- status ----------------------------------------------------------
     @app.get("/api/status")
@@ -280,7 +285,7 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
     async def ws(socket: WebSocket):
         e: Engine = socket.app.state.engine
         if e.s.app_password and not hmac.compare_digest(
-            socket.cookies.get("ai_trader", ""), _session_token(e.s.app_password)
+            socket.cookies.get("ai_trader", "").encode(), _session_token(e.s.app_password).encode()
         ):
             await socket.close(code=1008)
             return
