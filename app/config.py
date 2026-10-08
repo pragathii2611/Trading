@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     exchange: Literal["NSE", "BSE"] = "NSE"
     watchlist: list[str] = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"]
     candle_interval: Literal["minute", "5minute", "15minute", "60minute", "day"] = "5minute"
-    poll_seconds: int = 60
+    poll_seconds: int = 60                # strategy evaluation interval
+    quote_seconds: int = 5                # price refresh / order matching interval
     autostart: bool = False
 
     # --- Strategy ---------------------------------------------------------
@@ -32,9 +33,12 @@ class Settings(BaseSettings):
     sell_threshold: float = -0.35
 
     # --- Capital & risk ---------------------------------------------------
-    # Capital the bot is allowed to use (in live mode this caps exposure even if
-    # the broker account holds more).
+    # Opening paper-trading balance (more can be added from the Funds page).
     starting_capital: float = 100_000.0
+    # Max capital the bot may trade with (caps exposure even if the account holds more).
+    bot_capital: float = 100_000.0
+    # Intraday leverage for paper MIS orders. 1 = no leverage (safer).
+    mis_leverage: float = 1.0
     risk_per_trade_pct: float = 1.0       # % of equity lost if the stop is hit
     max_position_pct: float = 20.0        # max % of equity in one stock
     max_open_positions: int = 5
@@ -42,6 +46,16 @@ class Settings(BaseSettings):
     stop_loss_pct: float = 1.5
     take_profit_pct: float = 3.0
     cooldown_minutes: int = 30            # wait after exiting before re-entering
+
+    # --- Loss-cutting / profit-protection exits ---------------------------
+    breakeven_trigger_pct: float = 1.0    # once up this much, stop moves to entry price
+    trailing_stop_pct: float = 1.0        # exit if price falls this much from its peak
+    early_exit_on_weak_signal: bool = True  # exit a losing trade when the score turns bearish
+    weak_signal_threshold: float = -0.15
+    max_hold_minutes: int = 120           # exit trades that go nowhere for this long
+    daily_profit_target_pct: float = 1.5  # after reaching this day profit...
+    profit_giveback_pct: float = 50.0     # ...halt if this % of the peak profit is given back
+    no_new_entries_after: str = "14:45"   # IST
     product: Literal["MIS", "CNC"] = "MIS"  # MIS = intraday, CNC = delivery
     square_off_time: str = "15:15"        # IST; MIS positions closed after this
     enforce_market_hours: bool = True
@@ -53,6 +67,9 @@ class Settings(BaseSettings):
     kite_access_token: str = ""
 
     db_path: str = "trading.db"
+    # Password for the web app (username: anything). Strongly recommended when
+    # opening the app from your phone over Wi-Fi. Empty = no password.
+    app_password: str = ""
 
     @field_validator("watchlist", mode="before")
     @classmethod

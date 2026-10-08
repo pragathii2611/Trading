@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AI Trader">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1014" media="(prefers-color-scheme: dark)">
+  <title>AI Trader</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icon-180.png">
+  <link rel="icon" href="/static/icon-180.png">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="top-row">
+      <div class="brand">AI Trader <span id="modeBadge" class="badge">PAPER</span></div>
+      <button id="btnKill" class="kill" aria-label="Kill switch">KILL</button>
+    </div>
+    <div class="kpis">
+      <div><label>Equity</label><b id="kEquity">–</b></div>
+      <div><label>Day P&amp;L</label><b id="kPnl">–</b></div>
+      <div><label>Available</label><b id="kAvail">–</b></div>
+    </div>
+    <div id="banner" class="banner hidden"></div>
+  </header>
+
+  <main id="views">
+    <!-- WATCHLIST -->
+    <section class="view active" id="view-watch">
+      <form id="addSymbol" class="search">
+        <input id="symInput" placeholder="Search & add  e.g. SBIN" autocomplete="off" autocapitalize="characters" enterkeyhint="done">
+        <button class="pill" aria-label="Add">＋</button>
+      </form>
+      <ul id="watchList" class="list"></ul>
+      <p class="hint pad">Tap a stock for Buy / Sell / Chart. The bot auto-trades every stock in this list.</p>
+    </section>
+
+    <!-- ORDERS -->
+    <section class="view" id="view-orders">
+      <div class="seg-tabs" data-seg="orders">
+        <button data-k="open" class="on">Open</button><button data-k="book">Executed</button><button data-k="trades">Trades</button>
+      </div>
+      <div id="ordersBody"></div>
+    </section>
+
+    <!-- PORTFOLIO -->
+    <section class="view" id="view-portfolio">
+      <div class="seg-tabs" data-seg="portfolio">
+        <button data-k="positions" class="on">Positions</button><button data-k="holdings">Holdings</button>
+      </div>
+      <div class="summary" id="pfSummary"></div>
+      <div id="portfolioBody"></div>
+      <p class="hint pad">🛡 Protected positions are watched automatically: stop-loss, breakeven, trailing stop and early exit when weakening. Intraday positions are squared off at the set time.</p>
+    </section>
+
+    <!-- BOT -->
+    <section class="view" id="view-bot">
+      <div class="card bot-card">
+        <div>
+          <div id="botState" class="bot-state">Bot off</div>
+          <div class="hint" id="botSub">Auto-trading is paused</div>
+        </div>
+        <button id="btnBot" class="btn big buy">Start</button>
+      </div>
+      <div class="card">
+        <h3>P&amp;L today</h3>
+        <div id="pnlChart" class="chart sm"></div>
+      </div>
+      <h4 class="section">Signals</h4>
+      <ul id="signalsList" class="list"></ul>
+      <details class="card">
+        <summary>Strategy, risk &amp; loss-cutting rules</summary>
+        <form id="settingsForm">
+          <div id="settingsFields" class="settings"></div>
+          <button class="btn block primary">Save settings</button>
+        </form>
+      </details>
+      <details class="card">
+        <summary>Backtest a strategy</summary>
+        <form id="btForm" class="stack">
+          <input id="btSymbol" placeholder="Symbol" value="RELIANCE" required autocapitalize="characters">
+          <select id="btStrategy">
+            <option value="ensemble">Ensemble (recommended)</option>
+            <option value="ema_cross">EMA crossover</option>
+            <option value="macd">MACD momentum</option>
+            <option value="rsi">RSI mean reversion</option>
+          </select>
+          <input id="btCapital" type="number" inputmode="decimal" placeholder="Capital ₹" value="100000">
+          <button class="btn block primary">Run backtest</button>
+        </form>
+        <div id="btResult" class="hidden">
+          <div class="stats" id="btStats"></div>
+          <div id="btChart" class="chart sm"></div>
+          <ul id="btTrades" class="list compact"></ul>
+        </div>
+      </details>
+      <h4 class="section">Activity</h4>
+      <ul id="eventsList" class="events"></ul>
+    </section>
+
+    <!-- ACCOUNT -->
+    <section class="view" id="view-account">
+      <div class="card">
+        <label class="muted">Available margin</label>
+        <div class="big-num" id="fAvail">–</div>
+        <div class="stats" id="fundStats"></div>
+      </div>
+      <form id="fundForm" class="card stack">
+        <h3>Add / withdraw money</h3>
+        <input id="fundAmount" type="number" inputmode="decimal" min="1" step="any" placeholder="Amount ₹" required>
+        <input id="fundNote" placeholder="Note (optional)">
+        <div class="row2">
+          <button class="btn block buy" data-act="add">Add funds</button>
+          <button class="btn block" data-act="withdraw">Withdraw</button>
+        </div>
+        <p class="hint" id="fundHint"></p>
+      </form>
+      <form id="botCapForm" class="card stack">
+        <h3>Bot capital</h3>
+        <input id="botCap" type="number" inputmode="decimal" min="0" step="any" required>
+        <button class="btn block">Save</button>
+        <p class="hint">The most money the auto-trading bot may use. Manual trades can use the rest.</p>
+      </form>
+      <div class="card stack" id="kiteCard">
+        <h3>Zerodha Kite</h3>
+        <p class="hint" id="kiteInfo"></p>
+        <button id="btnKite" class="btn block hidden">Login to Kite</button>
+      </div>
+      <h4 class="section">Ledger</h4>
+      <ul id="ledger" class="list compact"></ul>
+    </section>
+  </main>
+
+  <nav class="tabbar" id="tabbar">
+    <button data-view="watch" class="on"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Watchlist</button>
+    <button data-view="orders"><svg viewBox="0 0 24 24"><path d="M7 3h10l3 3v15H4V3h3zM8 9h8M8 13h8M8 17h5"/></svg>Orders</button>
+    <button data-view="portfolio"><svg viewBox="0 0 24 24"><path d="M3 8h18v12H3zM8 8V5h8v3"/></svg>Portfolio</button>
+    <button data-view="bot"><svg viewBox="0 0 24 24"><path d="M5 9h14v10H5zM12 9V5M9 14h.01M15 14h.01"/><circle cx="12" cy="4" r="1"/></svg>Bot</button>
+    <button data-view="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>Account</button>
+  </nav>
+</div>
+
+<!-- Chart sheet -->
+<div id="chartSheet" class="sheet hidden" role="dialog">
+  <div class="sheet-panel tall">
+    <div class="grab"></div>
+    <div class="sheet-head">
+      <div><b id="chartTitle"></b> <span id="chartLtp" class="muted"></span></div>
+      <button class="x" data-close aria-label="Close">✕</button>
+    </div>
+    <div id="chartSignal" class="sig-line"></div>
+    <div id="chart" class="chart"></div>
+    <div class="legend"><span class="l-ema20">EMA 20</span><span class="l-ema50">EMA 50</span></div>
+    <div class="row2 sticky-actions">
+      <button class="btn block buy big" id="chartBuy">BUY</button>
+      <button class="btn block sell big" id="chartSell">SELL</button>
+    </div>
+  </div>
+</div>
+
+<!-- Order sheet -->
+<div id="orderSheet" class="sheet hidden" role="dialog">
+  <form id="orderForm" class="sheet-panel order">
+    <div class="ow-head" id="owHead">
+      <div>
+        <div class="ow-title"><span id="owSide">BUY</span> <span id="owSymbol"></span></div>
+        <div class="ow-sub" id="owLtp"></div>
+      </div>
+      <label class="switch" aria-label="Buy / sell"><input type="checkbox" id="owToggle"><span></span></label>
+    </div>
+    <div class="ow-body">
+      <div class="seg" id="owExchange">
+        <label><input type="radio" name="exchange" value="NSE" checked><span>NSE</span></label>
+        <label><input type="radio" name="exchange" value="BSE"><span>BSE</span></label>
+      </div>
+      <div class="seg" id="owProduct">
+        <label><input type="radio" name="product" value="MIS" checked><span>Intraday MIS</span></label>
+        <label><input type="radio" name="product" value="CNC"><span>Longterm CNC</span></label>
+      </div>
+      <div class="fields3">
+        <label>Qty<input name="qty" type="number" inputmode="numeric" min="1" step="1" value="1" required></label>
+        <label>Price<input name="price" type="number" inputmode="decimal" min="0" step="0.05"></label>
+        <label>Trigger<input name="trigger_price" type="number" inputmode="decimal" min="0" step="0.05"></label>
+      </div>
+      <div class="seg four" id="owType">
+        <label><input type="radio" name="order_type" value="MARKET" checked><span>Market</span></label>
+        <label><input type="radio" name="order_type" value="LIMIT"><span>Limit</span></label>
+        <label><input type="radio" name="order_type" value="SL"><span>SL</span></label>
+        <label><input type="radio" name="order_type" value="SL-M"><span>SL-M</span></label>
+      </div>
+      <div class="seg" id="owValidity">
+        <label><input type="radio" name="validity" value="DAY" checked><span>Day</span></label>
+        <label><input type="radio" name="validity" value="IOC"><span>IOC</span></label>
+      </div>
+      <div class="protect" id="owProtect">
+        <label class="check"><input type="checkbox" name="auto_protect" checked> 🛡 Auto-protect: stop-loss, breakeven &amp; trailing exit</label>
+        <div class="fields2">
+          <label>Stop-loss %<input name="stop_loss_pct" type="number" inputmode="decimal" step="0.1" min="0.1"></label>
+          <label>Target %<input name="target_pct" type="number" inputmode="decimal" step="0.1" min="0.1"></label>
+        </div>
+      </div>
+      <div id="owError" class="error"></div>
+    </div>
+    <div class="ow-foot">
+      <span id="owMargin" class="muted"></span>
+      <div class="row2">
+        <button type="button" class="btn block" id="owCancel">Cancel</button>
+        <button class="btn block buy big" id="owSubmit">Buy</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<!-- Action sheet (open order / position actions) -->
+<div id="actionSheet" class="sheet hidden" role="dialog">
+  <div class="sheet-panel">
+    <div class="grab"></div>
+    <div class="sheet-head"><b id="actTitle"></b><button class="x" data-close aria-label="Close">✕</button></div>
+    <div id="actBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
