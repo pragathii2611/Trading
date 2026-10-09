@@ -6,6 +6,12 @@ set -euo pipefail
 REPO=${REPO:-https://github.com/pragathii2611/Trading.git}
 DIR=/opt/ai-trader
 
+# Small servers (1 GB, e.g. AWS free tier) need swap to build the image.
+if [ "$(swapon --show | wc -l)" -eq 0 ] && [ "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" -lt 2000000 ]; then
+  echo "Adding 2 GB swap…"
+  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
 if ! command -v docker >/dev/null; then
   echo "Installing Docker…"
   curl -fsSL https://get.docker.com | sh
