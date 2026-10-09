@@ -371,8 +371,9 @@ class KiteBroker(Broker):
 
     name = "kite"
 
-    def __init__(self, kite):
+    def __init__(self, kite, market_protection: float = -1):
         self.kite = kite
+        self.market_protection = market_protection
 
     def place_order(self, req: OrderRequest) -> dict:
         req.validate()
@@ -384,6 +385,8 @@ class KiteBroker(Broker):
             params["price"] = req.price
         if req.order_type in ("SL", "SL-M"):
             params["trigger_price"] = req.trigger_price
+        if req.order_type in ("MARKET", "SL-M"):
+            params["market_protection"] = self.market_protection
         try:
             oid = k.place_order(**params)
         except Exception as e:  # kiteconnect raises typed exceptions; surface the message
@@ -394,6 +397,8 @@ class KiteBroker(Broker):
         params = {k: v for k, v in changes.items() if v is not None}
         if "qty" in params:
             params["quantity"] = params.pop("qty")
+        if params.get("order_type") in ("MARKET", "SL-M"):
+            params["market_protection"] = self.market_protection
         try:
             self.kite.modify_order(self.kite.VARIETY_REGULAR, order_id, **params)
         except Exception as e:
@@ -459,3 +464,14 @@ class KiteBroker(Broker):
 
     def day_pnl(self, ltp=None) -> float:
         return round(sum(p["pnl"] for p in self.kite.positions()["day"]), 2)
+
+    def trades_today(self) -> list[dict]:
+        out = []
+        for t in self.kite.trades():
+            ts = t.get("fill_timestamp") or t.get("exchange_timestamp") or t.get("order_timestamp")
+            out.append({"trade_id": str(t["trade_id"]), "order_id": t["order_id"],
+                        "time": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                        "symbol": t["tradingsymbol"], "exchange": t["exchange"], "side": t["transaction_type"],
+                        "qty": t["quantity"], "price": t["average_price"], "product": t["product"],
+                        "charges": 0.0, "realized": 0.0, "tag": ""})
+        return out

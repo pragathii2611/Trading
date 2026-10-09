@@ -378,6 +378,14 @@ async function loadFunds() {
     ? (state.snap?.connected && s.data_source === "kite" ? "Connected. Kite login expires daily at ~6 AM." : "Log in each morning to connect your Zerodha account.")
     : "Not set up. Add KITE_API_KEY and KITE_API_SECRET to .env to connect your Zerodha account.";
   $("#btnKite").classList.toggle("hidden", !s.kite_configured);
+  loadPreflight();
+}
+async function loadPreflight() {
+  try {
+    const checks = await api("GET", "/api/preflight");
+    $("#preflight").innerHTML = checks.map((c) => `<li><span>${c.ok === true ? "✅" : c.ok === false ? "❌" : "⚠️"}</span>
+      <b>${esc(c.name)}</b><span class="d">${esc(c.detail)}</span></li>`).join("");
+  } catch (e) { $("#preflight").innerHTML = `<li class="muted">${esc(e.message)}</li>`; }
 }
 $("#fundForm").addEventListener("submit", async (e) => {
   e.preventDefault();

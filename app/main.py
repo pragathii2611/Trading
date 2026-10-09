@@ -18,7 +18,7 @@ from .backtest import run_backtest
 from .brokers import OrderError, OrderRequest
 from .config import get_settings
 from .data import candles_to_json
-from .engine import Engine
+from .engine import Engine, is_token_error
 from . import indicators as ind
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -115,10 +115,20 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
             return fn(*a, **kw)
         except (OrderError, ValueError) as e:
             raise HTTPException(400, str(e)) from e
+        except Exception as e:
+            if type(e).__module__.startswith("kiteconnect"):
+                if is_token_error(e):
+                    app.state.engine.kite_logged_out()
+                raise HTTPException(400, f"Kite: {e}") from e
+            raise
 
     @app.get("/")
     def index():
         return FileResponse(STATIC / "index.html")
+
+    @app.get("/api/preflight")
+    def preflight(request: Request):
+        return eng(request).preflight()
 
     @app.get("/api/health")
     def health():
@@ -129,7 +139,7 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
     def status(request: Request):
         e = eng(request)
         if not e.snapshot:
-            e.step(force_strategy=True)
+            guard(e.step, force_strategy=True)
         return e.snapshot
 
     # ---- bot control -----------------------------------------------------
@@ -145,7 +155,7 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
 
     @app.post("/api/kill")
     def kill(request: Request):
-        eng(request).kill()
+        guard(eng(request).kill)
         return {"ok": True}
 
     @app.post("/api/kill/reset")
@@ -173,7 +183,7 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
     @app.get("/api/orders")
     def orders(request: Request):
         e = eng(request)
-        return e.broker.orders() if e.broker else []
+        return guard(e.broker.orders) if e.broker else []
 
     # ---- portfolio -------------------------------------------------------
     @app.get("/api/positions")
@@ -195,7 +205,7 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
     @app.get("/api/holdings")
     def holdings(request: Request):
         e = eng(request)
-        return e.broker.holdings(e.ltp) if e.broker else []
+        return guard(e.broker.holdings, e.ltp) if e.broker else []
 
     @app.get("/api/trades")
     def trades(request: Request, limit: int = 200):
@@ -216,7 +226,7 @@ def create_app(engine: Engine | None = None, start_loop: bool = True) -> FastAPI
         e = eng(request)
         if not e.broker:
             return {}
-        return {**e.broker.funds(e.ltp), "bot_capital": e.s.bot_capital,
+        return {**guard(e.broker.funds, e.ltp), "bot_capital": e.s.bot_capital,
                 "can_add_funds": e.broker.supports_funds}
 
 

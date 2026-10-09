@@ -65,6 +65,14 @@ class Settings(BaseSettings):
     kite_api_key: str = ""
     kite_api_secret: str = ""
     kite_access_token: str = ""
+    # Exchanges reject API market/SL-M orders without market protection.
+    # -1 = Kite's automatic protection; 0 < value <= 100 = that percentage.
+    kite_market_protection: float = -1
+    # Route Kite API calls through a static-IP proxy (needed when the host has no
+    # fixed outbound IP, e.g. Render/Railway). Example: http://user:pass@host:port
+    kite_proxy_url: str = ""
+    # Hard cap on any single order's value in rupees (0 = no cap). Guards against typos.
+    max_order_value: float = 0
 
     db_path: str = "trading.db"
     # Password for the web app (username: anything). Strongly recommended when

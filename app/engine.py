@@ -59,6 +59,7 @@ class Engine:
         self._recorded = 0
         self._last_strategy = 0.0
         self._last_equity = -1e9
+        self._last_trade_sync = -1e9
         self._task: asyncio.Task | None = None
         self._build()
 
@@ -81,15 +82,16 @@ class Engine:
         if s.kite_api_key:
             from kiteconnect import KiteConnect
 
-            self.kite = KiteConnect(api_key=s.kite_api_key)
+            proxies = {"http": s.kite_proxy_url, "https": s.kite_proxy_url} if s.kite_proxy_url else None
+            self.kite = KiteConnect(api_key=s.kite_api_key, proxies=proxies)
             if token:
                 self.kite.set_access_token(token)
         kite_ready = self.kite is not None and bool(token)
 
         source = s.data_source
         if source == "kite" and not kite_ready:
-            self.event("warn", "Kite data needs a login; using simulated prices until you log in.")
-            source = "simulated"
+            self.event("warn", "Kite data needs a login; using delayed Yahoo prices until you log in.")
+            source = "yahoo"
         self.data = make_provider(source, s.candle_interval, self.kite if kite_ready else None)
         self.data_source = source
         if source == "simulated":
@@ -98,7 +100,7 @@ class Engine:
         self.strategy = make_strategy(s.strategy, s.buy_threshold, s.sell_threshold)
 
         if self.mode == "live":
-            self.broker = KiteBroker(self.kite) if kite_ready else None
+            self.broker = KiteBroker(self.kite, s.kite_market_protection) if kite_ready else None
             if not kite_ready:
                 self.event("warn", "LIVE mode: log in to Kite from the dashboard before trading.")
         else:
@@ -109,10 +111,14 @@ class Engine:
                 self._recorded = len(self.broker.trades)
             else:
                 self.broker.add_funds(s.starting_capital, "opening balance")
-            managed = self.store.get("paper_managed", {})
-            for k, p in managed.items():
-                p["opened_at"] = datetime.fromisoformat(p["opened_at"])
-                self.managed[k] = Position(**p)
+        # Stops/targets of protected positions survive restarts in both modes.
+        for k, p in self.store.get(self._managed_key, {}).items():
+            p["opened_at"] = datetime.fromisoformat(p["opened_at"])
+            self.managed[k] = Position(**p)
+
+    @property
+    def _managed_key(self) -> str:
+        return f"{self.mode}_managed"
 
     def _stored_kite_token(self) -> str:
         t = self.store.get("kite_token")
@@ -151,8 +157,11 @@ class Engine:
             try:
                 await asyncio.to_thread(self.step)
             except Exception as e:  # keep the loop alive no matter what
-                log.exception("engine step failed")
-                self.event("error", f"engine step failed: {e}")
+                if is_token_error(e):
+                    self.kite_logged_out()
+                else:
+                    log.exception("engine step failed")
+                    self.event("error", f"engine step failed: {e}")
             interval = self.s.quote_seconds if self.data_source != "yahoo" else max(20, self.s.quote_seconds)
             await asyncio.sleep(max(0.5, interval - (time.monotonic() - started)))
 
@@ -206,14 +215,31 @@ class Engine:
                 for sym, px in self.data.get_ltp(syms, ex).items():
                     self.ltp[f"{ex}:{sym}"] = px
             except Exception as e:
+                if is_token_error(e):
+                    raise
                 self.event("warn", f"price fetch failed for {ex}: {e}")
 
-    def _record_trades(self) -> None:
+    def _record_trades(self, force: bool = False) -> None:
         if isinstance(self.broker, PaperBroker):
             new = self.broker.trades[self._recorded:]
             for t in new:
                 self.store.add_trade(t, self.mode)
             self._recorded = len(self.broker.trades)
+        elif isinstance(self.broker, KiteBroker) and (force or time.monotonic() - self._last_trade_sync >= 20):
+            self._last_trade_sync = time.monotonic()
+            key = f"live_trade_ids:{now_ist().date().isoformat()}"
+            seen = set(self.store.get(key, []))
+            new = [t for t in self.broker.trades_today() if t["trade_id"] not in seen]
+            for t in new:
+                self.store.add_trade(t, self.mode)
+                seen.add(t["trade_id"])
+            if new:
+                self.store.put(key, sorted(seen))
+
+    def _ensure_start_equity(self) -> None:
+        """The daily loss limit is a % of the day's starting equity, so it must be known."""
+        if self.start_equity <= 0 and self.broker is not None:
+            self.start_equity = float(self.broker.funds(self.ltp).get("equity") or 0)
 
     def _compute_signals(self) -> None:
         for sym in self.s.watchlist:
@@ -221,6 +247,8 @@ class Engine:
                 df = self.data.get_candles(sym, self.s.exchange, self.s.candle_interval, 200)
                 sig = self.strategy.evaluate(df)
             except Exception as e:
+                if is_token_error(e):
+                    raise
                 self.event("warn", f"signal failed for {sym}: {e}")
                 continue
             self.signals[sym] = {"symbol": sym, "action": sig.action, "score": sig.score,
@@ -246,6 +274,8 @@ class Engine:
             bot_equity = min(self.s.bot_capital, funds["equity"])
             cash = min(funds["available"], self.s.bot_capital - bot_used)
             qty = self.risk.position_size(bot_equity, cash, px)
+            if self.s.max_order_value > 0:
+                qty = min(qty, int(self.s.max_order_value // px))
             if qty < 1:
                 self.event("info", f"BUY {sym} skipped: not enough bot capital")
                 continue
@@ -338,6 +368,7 @@ class Engine:
     def _day_guard(self, now: datetime) -> None:
         if self.halted:
             return
+        self._ensure_start_equity()
         pnl = self.broker.day_pnl(self.ltp)
         self.peak_day_pnl = max(self.peak_day_pnl, pnl)
         reason = self.risk.day_halt_reason(pnl, self.peak_day_pnl, self.start_equity)
@@ -408,6 +439,11 @@ class Engine:
             if key not in self.ltp:
                 self._refresh_prices()
                 broker.on_prices(self.ltp)
+            if self.s.max_order_value > 0:
+                px = req.price if req.order_type in ("LIMIT", "SL") else self.ltp.get(key, 0)
+                if px * req.qty > self.s.max_order_value:
+                    raise OrderError(f"order value ₹{px * req.qty:,.0f} is above your limit of "
+                                     f"₹{self.s.max_order_value:,.0f} (MAX_ORDER_VALUE)")
             o = broker.place_order(req)
             self.event("order", f"{req.side} {req.qty} {req.symbol} {req.order_type} {req.product} → {o.get('status')}"
                                 + (f" ({o['status_message']})" if o.get("status_message") else ""))
@@ -504,6 +540,68 @@ class Engine:
             self._last_strategy = 0.0
             return self.public_settings()
 
+    def outbound_ip(self) -> str:
+        """The public IP that Kite sees (through KITE_PROXY_URL when set)."""
+        import requests
+
+        proxy = self.s.kite_proxy_url
+        r = requests.get("https://api.ipify.org", timeout=8,
+                         proxies={"http": proxy, "https": proxy} if proxy else None)
+        return r.text.strip()
+
+    def preflight(self) -> list[dict]:
+        """Go-live checklist. ok: True = good, False = blocking, None = warning."""
+        s, checks = self.s, []
+
+        def add(name, ok, detail):
+            checks.append({"name": name, "ok": ok, "detail": detail})
+
+        add("App password", bool(s.app_password),
+            "Set" if s.app_password else "Set APP_PASSWORD: the app is reachable from the internet")
+        add("Kite API keys", bool(s.kite_api_key and s.kite_api_secret),
+            "Set" if s.kite_api_key and s.kite_api_secret else "Set KITE_API_KEY and KITE_API_SECRET")
+        if self.kite is not None and getattr(self.kite, "access_token", None):
+            try:
+                prof = self.kite.profile()
+                add("Kite login", True, f"Logged in as {prof.get('user_id')} (expires ~6 AM daily)")
+            except Exception as e:
+                add("Kite login", False, f"Log in again: {e}")
+        else:
+            add("Kite login", False, "Tap “Login to Kite” below (needed every morning)")
+        try:
+            ip = self.outbound_ip()
+            add("Static IP", None, f"Orders leave from {ip}. Register exactly this IP in the Kite developer "
+                                   "console → IP whitelist. It must never change"
+                                   + ("" if s.kite_proxy_url else " (use KITE_PROXY_URL or a VPS for a fixed IP)"))
+        except Exception as e:
+            add("Static IP", False, f"Could not detect outbound IP: {e}")
+        add("Market data", s.data_source == "kite" and self.data_source == "kite",
+            f"Using {self.data_source}" + ("" if self.data_source == "kite" else " — set DATA_SOURCE=kite for real-time prices"))
+        add("Order size cap", None if s.max_order_value <= 0 else True,
+            f"₹{s.max_order_value:,.0f} per order" if s.max_order_value > 0
+            else "No cap. Set MAX_ORDER_VALUE (e.g. 10000) for your first live weeks")
+        if isinstance(self.broker, KiteBroker):
+            try:
+                avail = float(self.broker.funds().get("available") or 0)
+                add("Funds", avail > 0, f"₹{avail:,.0f} available in Kite; bot may use ₹{s.bot_capital:,.0f}")
+            except Exception as e:
+                add("Funds", False, f"Could not read Kite funds: {e}")
+        add("Live mode", True if self.mode == "live" else None,
+            "LIVE: real orders" if self.mode == "live"
+            else "Paper mode. When ready: TRADING_MODE=live and LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISKS")
+        return checks
+
+    def kite_logged_out(self) -> None:
+        """Kite tokens expire every morning (~6 AM). Stop using the broker until re-login."""
+        with self.lock:
+            if self.kite is None:
+                return
+            self.store.put("kite_token", None)
+            self.s.kite_access_token = ""
+            self.event("error", "Kite session expired. Log in to Kite again (Account → Login to Kite). "
+                                "Protected positions are NOT being watched until you do.")
+            self._build()
+
     def kite_login(self, request_token: str) -> None:
         with self.lock:
             if self.kite is None or not self.s.kite_api_secret:
@@ -524,7 +622,8 @@ class Engine:
     def _persist(self) -> None:
         if isinstance(self.broker, PaperBroker):
             self.store.put("paper_state", self.broker.to_state())
-            self.store.put("paper_managed", {k: p.to_dict() for k, p in self.managed.items()})
+        if self.broker is not None:
+            self.store.put(self._managed_key, {k: p.to_dict() for k, p in self.managed.items()})
 
     def _snapshot(self, now: datetime) -> None:
         b = self.broker
@@ -556,3 +655,7 @@ class Engine:
             "events": list(self.events)[:30],
         }
 
+
+def is_token_error(e: Exception) -> bool:
+    """Kite raises TokenException when the daily access token has expired."""
+    return type(e).__name__ == "TokenException"

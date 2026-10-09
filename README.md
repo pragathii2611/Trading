@@ -89,29 +89,56 @@ the free plan: it sleeps after 15 minutes idle, which stops the bot and wipes yo
 
 **Notes:**
 - Keep it at **1 instance**. The trading engine lives inside the web process.
-- For Kite, set the app's redirect URL to `https://<your-app-url>/kite/callback`.
-- Zerodha now requires API orders to come from a **registered static IP**. Render and Railway only
-  offer static outbound IPs on some plans, so check that before going live. A small Mumbai VPS is the
-  alternative. Paper trading works anywhere.
+- Render and Railway are fine for **paper trading**. For **live** trading you need a static IP (see below).
 
-## Going from demo → paper trading on real prices → live
+## Go live with real money (Zerodha)
 
-1. **Demo (default):** `DATA_SOURCE=simulated` uses fake prices, so you can try every button any time.
-2. **Paper trading on real prices:** set `DATA_SOURCE=yahoo` (free, about 15 min delayed), or `kite`
-   (real time; needs the Kite Connect subscription with historical data).
-3. **Live trading on Zerodha:**
-   1. Create an app at <https://developers.kite.trade>. Set the redirect URL to `http://<your-computer>:8000/kite/callback`.
-   2. Put the keys in `.env`:
-      ```
-      KITE_API_KEY=...
-      KITE_API_SECRET=...
-      DATA_SOURCE=kite
-      TRADING_MODE=live
-      LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISKS
-      ```
-   3. Restart the app. Then open **Account → Login to Kite**. Kite tokens expire every morning, so you log in once per day.
-   4. A red **LIVE** badge shows at the top. Every live order and bot start asks you to confirm.
-   5. Start with a small **Bot capital**.
+SEBI/NSE rules in force since 1 April 2026 add two requirements:
+- **Kite API orders must come from a static IP registered on your Kite app.** Orders from any other IP are rejected.
+- **API market and SL-M orders must carry "market protection".** The app sends this automatically (`KITE_MARKET_PROTECTION=-1`).
+
+Render and Railway don't give you a fixed IP of your own, so live trading runs on a small server in India.
+
+### Step 1: Kite Connect app (you, about 10 minutes)
+1. Sign in at <https://developers.kite.trade> with your Zerodha ID and create an app.
+   You need the paid Kite Connect plan; historical data is now included. Check the price in the console.
+2. Note the **API key** and **API secret**. Leave the redirect URL for now.
+
+### Step 2: Server with a static IP (you, about 10 minutes)
+1. Create the smallest Ubuntu 24.04 server in **Mumbai**, for example AWS Lightsail ($5/month) or DigitalOcean (Bangalore).
+   On Lightsail, also attach a free **Static IP** to it.
+2. Connect to the server (SSH) and run:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/pragathii2611/Trading/main/deploy/setup-vps.sh | sudo bash
+   ```
+   It installs everything and asks for an app password and your Kite keys. It then prints:
+   - your **app URL** (`https://<ip>.sslip.io`, with free HTTPS),
+   - the **static IP** to whitelist,
+   - the **Kite redirect URL**.
+3. Back in the Kite developer console, set the **redirect URL** and add the IP under **IP whitelist**.
+
+### Step 3: Check, then paper trade on real prices
+1. Open the app URL on your iPhone, then **Account → Login to Kite**. You must do this every morning, because Kite tokens expire around 6 AM.
+2. **Account → Go-live checklist** should show ✅ for login, funds and data. ⚠️ items are advice.
+3. Leave it in **paper mode for at least 2 weeks**, using real Kite prices. Watch the bot's results.
+
+### Step 4: Switch on live trading
+On the server, edit `/opt/ai-trader/.env`:
+```
+TRADING_MODE=live
+LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISKS
+BOT_CAPITAL=10000        # start small
+MAX_ORDER_VALUE=10000    # largest single new order; exits are never blocked
+```
+Then run `sudo bash /opt/ai-trader/deploy/setup-vps.sh` again; this also updates to the latest code. Every morning after that:
+1. Log in to Kite in the app.
+2. Check the checklist.
+3. Start the bot.
+
+A red **LIVE** badge shows, and every live order and bot start asks you to confirm.
+
+**If the Kite login expires** during the day, the app shows "Kite session expired". It stops trading and stops
+watching stop-losses until you log in again. Kite's own 15:20 auto square-off still applies to intraday positions.
 
 ## Layout
 
